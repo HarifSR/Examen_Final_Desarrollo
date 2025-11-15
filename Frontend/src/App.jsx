@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 
 const LOGIN_URL =
   "https://backcvbgtmdesa.azurewebsites.net/api/login/authenticate";
 const MENSAJES_URL =
   "https://backcvbgtmdesa.azurewebsites.net/api/Mensajes";
+const MENSAJES_LIST_URL =
+  "https://prueba-api-zd2m.onrender.com/chat-mensajes";
 
 function App() {
   const [username, setUsername] = useState(
@@ -15,9 +17,13 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // estado para la Serie II
+  // Serie II
   const [message, setMessage] = useState("");
   const [messageStatus, setMessageStatus] = useState("");
+
+  // Serie III
+  const [messages, setMessages] = useState([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
 
   // ============== SERIE I: LOGIN ==============
   const handleLogin = async (e) => {
@@ -39,7 +45,7 @@ function App() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          Username: username, // tal como lo pide el examen
+          Username: username,
           Password: password,
         }),
       });
@@ -61,7 +67,6 @@ function App() {
         throw new Error("No se recibió el token del servidor.");
       }
 
-      // Guardar en localStorage para usarlo en la Serie II
       localStorage.setItem("token", bearerToken);
       localStorage.setItem("username", username);
 
@@ -84,6 +89,7 @@ function App() {
     setMessage("");
     setMessageStatus("");
     setError("");
+    setMessages([]);
   };
 
   // ============== SERIE II: ENVIAR MENSAJE PROTEGIDO ==============
@@ -106,7 +112,6 @@ function App() {
     setLoading(true);
 
     try {
-      // Por si el backend ya devuelve "Bearer xxx", evitamos duplicar el Bearer
       const authHeader = currentToken.startsWith("Bearer ")
         ? currentToken
         : `Bearer ${currentToken}`;
@@ -115,12 +120,12 @@ function App() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: authHeader, // <--- CRÍTICO Y OBLIGATORIO
+          Authorization: authHeader, // crítico
         },
         body: JSON.stringify({
           Cod_Sala: 0,
-          Login_Emisor: username, // tu usuario de la Serie I
-          Contenido: message, // lo que escribas en el textarea
+          Login_Emisor: username,
+          Contenido: message,
         }),
       });
 
@@ -131,6 +136,9 @@ function App() {
 
       setMessage("");
       setMessageStatus("Mensaje enviado correctamente ✅");
+
+      // refrescar lista de mensajes (Serie III)
+      fetchMessages();
     } catch (err) {
       console.error(err);
       setError(err.message || "Error al enviar mensaje");
@@ -139,19 +147,56 @@ function App() {
     }
   };
 
+  // ============== SERIE III: LISTA CRONOLÓGICA ==============
+  const fetchMessages = async () => {
+    setLoadingMessages(true);
+    setError("");
+    try {
+      const res = await fetch(MENSAJES_LIST_URL);
+      if (!res.ok) {
+        throw new Error("No se pudieron obtener los mensajes.");
+      }
+      const data = await res.json();
+
+      // Intentamos adaptarnos a distintos formatos de respuesta
+      let list = Array.isArray(data) ? data : data.data || data.result || [];
+
+      // Si viene vacío, al menos evitamos romper
+      if (!Array.isArray(list)) list = [];
+
+      // Si tiene fecha, podrías ordenar aquí.
+      // Asumimos que ya viene ordenado desde la API.
+      setMessages(list);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Error al cargar mensajes");
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  // Cuando hay token, cargamos mensajes al entrar
+  useEffect(() => {
+    if (token) {
+      fetchMessages();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   // ============== VISTAS ==============
 
-  // Si YA hay token -> mostramos el formulario protegido de mensajes
+  // Ya autenticado: formulario + lista de mensajes
   if (token) {
     return (
       <div className="login-container">
-        <div className="login-card">
-          <h1>Enviar Mensaje (Zona Protegida)</h1>
-          <p>
+        <div className="login-card wide">
+          <h1>Chat UMG</h1>
+          <p className="hint">
             Autenticado como <strong>{username || "usuario"}</strong>
           </p>
 
-          <form onSubmit={handleSendMessage}>
+          {/* SERIE II: envío de mensaje */}
+          <form onSubmit={handleSendMessage} className="message-form">
             <label>
               Mensaje
               <textarea
@@ -169,6 +214,56 @@ function App() {
             </button>
           </form>
 
+          {/* SERIE III: lista cronológica */}
+          <div className="messages-header">
+            <h2>Mensajes del chat</h2>
+            <button
+              className="btn small"
+              type="button"
+              onClick={fetchMessages}
+              disabled={loadingMessages}
+            >
+              {loadingMessages ? "Cargando..." : "Refrescar"}
+            </button>
+          </div>
+
+          <div className="messages-list">
+            {messages.length === 0 && !loadingMessages && (
+              <p className="hint">No hay mensajes para mostrar.</p>
+            )}
+
+            {messages.map((msg, index) => {
+              // Intentamos leer campos típicos
+              const emisor =
+                msg.Login_Emisor ||
+                msg.login_emisor ||
+                msg.usuario ||
+                "Anónimo";
+              const contenido =
+                msg.Contenido || msg.contenido || msg.mensaje || "(sin texto)";
+              const fecha =
+                msg.FechaEnvio ||
+                msg.fechaEnvio ||
+                msg.Fecha ||
+                msg.fecha ||
+                "";
+
+              return (
+                <div key={msg.Id || msg.id || index} className="message-item">
+                  <div className="message-header">
+                    <span className="message-user">{emisor}</span>
+                    {fecha && (
+                      <span className="message-date">
+                        {String(fecha).toString()}
+                      </span>
+                    )}
+                  </div>
+                  <p className="message-text">{contenido}</p>
+                </div>
+              );
+            })}
+          </div>
+
           <button className="btn secondary" onClick={handleLogout}>
             Cerrar sesión
           </button>
@@ -177,7 +272,7 @@ function App() {
     );
   }
 
-  // Si NO hay token -> pantalla de login (Serie I)
+  // Si NO hay token -> login normal (Serie I)
   return (
     <div className="login-container">
       <form className="login-card" onSubmit={handleLogin}>
